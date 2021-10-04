@@ -60,4 +60,11 @@ CONFIG_BS_SCHED=y
 
 Now compile `make` \
 Then install the modules `sudo make modules_install` \
-Then install the kernel `sudo make install`
+Then install the kernel `sudo make install`\
+Reboot and choose the new kernel
+
+To confirm that Baby is currently running:
+```
+$ dmesg | grep "Baby CPU"
+Baby CPU scheduler (dl) v5.14 by Hamad Al Marri.
+```
