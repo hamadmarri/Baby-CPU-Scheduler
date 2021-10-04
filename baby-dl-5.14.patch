@@ -62,10 +62,10 @@ index 978fcfca5871..464b134de739 100644
  obj-$(CONFIG_SMP) += cpupri.o cpudeadline.o topology.o stop_task.o pelt.o
 diff --git a/kernel/sched/bs.c b/kernel/sched/bs.c
 new file mode 100644
-index 000000000000..c14e4c38b314
+index 000000000000..53b3fe6a6249
 --- /dev/null
 +++ b/kernel/sched/bs.c
-@@ -0,0 +1,865 @@
+@@ -0,0 +1,885 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Baby Scheduler (BS) Class (SCHED_NORMAL/SCHED_BATCH)
@@ -293,8 +293,25 @@ index 000000000000..c14e4c38b314
 +enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 +{
 +	bool curr = cfs_rq->curr == se;
++	bool renorm = !(flags & ENQUEUE_WAKEUP) || (flags & ENQUEUE_MIGRATED);
++
++	/*
++	 * If we're the current task, we must renormalise before calling
++	 * update_curr().
++	 */
++	if (renorm && curr)
++		se->bs_node.deadline = calc_deadline(cfs_rq, se);
 +
 +	update_curr(cfs_rq);
++
++	/*
++	 * Otherwise, renormalise after, such that we're placed at the current
++	 * moment in time, instead of some random moment in the past. Being
++	 * placed in the past could significantly boost this task to the
++	 * fairness detriment of existing tasks.
++	 */
++	if (renorm && !curr)
++		se->bs_node.deadline = calc_deadline(cfs_rq, se);
 +
 +	account_entity_enqueue(cfs_rq, se);
 +
@@ -876,7 +893,7 @@ index 000000000000..c14e4c38b314
 +static void task_fork_fair(struct task_struct *p)
 +{
 +	struct cfs_rq *cfs_rq;
-+	struct sched_entity *curr;
++	struct sched_entity *curr, *se = &p->se;
 +	struct rq *rq = this_rq();
 +	struct rq_flags rf;
 +
@@ -884,6 +901,9 @@ index 000000000000..c14e4c38b314
 +	update_rq_clock(rq);
 +
 +	cfs_rq = task_cfs_rq(current);
++
++	se->bs_node.deadline = calc_deadline(cfs_rq, se);
++
 +	curr = cfs_rq->curr;
 +	if (curr)
 +		update_curr(cfs_rq);
