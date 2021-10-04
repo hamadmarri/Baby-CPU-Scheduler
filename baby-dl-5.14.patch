@@ -62,10 +62,10 @@ index 978fcfca5871..464b134de739 100644
  obj-$(CONFIG_SMP) += cpupri.o cpudeadline.o topology.o stop_task.o pelt.o
 diff --git a/kernel/sched/bs.c b/kernel/sched/bs.c
 new file mode 100644
-index 000000000000..53b3fe6a6249
+index 000000000000..520b10adc448
 --- /dev/null
 +++ b/kernel/sched/bs.c
-@@ -0,0 +1,885 @@
+@@ -0,0 +1,908 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Baby Scheduler (BS) Class (SCHED_NORMAL/SCHED_BATCH)
@@ -114,6 +114,15 @@ index 000000000000..53b3fe6a6249
 +	return deadline + prio_diff;
 +}
 +
++static inline bool
++reached_deadline(struct cfs_rq *cfs_rq, struct sched_entity *se)
++{
++	u64 now = rq_clock(rq_of(cfs_rq));
++	s64 delta = se->bs_node.deadline - now;
++
++	return (delta <= 0);
++}
++
 +static void update_curr(struct cfs_rq *cfs_rq)
 +{
 +	struct sched_entity *curr = cfs_rq->curr;
@@ -130,7 +139,8 @@ index 000000000000..53b3fe6a6249
 +	curr->exec_start = now;
 +	curr->sum_exec_runtime += delta_exec;
 +
-+	curr->bs_node.deadline = calc_deadline(cfs_rq, curr);
++	if (reached_deadline(cfs_rq, curr))
++		curr->bs_node.deadline = calc_deadline(cfs_rq, curr);
 +}
 +
 +static void update_curr_fair(struct rq *rq)
@@ -324,6 +334,19 @@ index 000000000000..53b3fe6a6249
 +static void
 +dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 +{
++	int task_sleep = flags & DEQUEUE_SLEEP;
++	struct task_struct *p = task_of(se);
++
++	/*
++	 * Check if didn't reach its deadline, then
++	 * rise its priority
++	 */
++	if (task_sleep && !reached_deadline(cfs_rq, se)
++	    && PRIO_TO_NICE(p->prio) > -20)
++	{
++		p->prio--;
++	}
++
 +	update_curr(cfs_rq);
 +
 +	if (se != cfs_rq->curr)
