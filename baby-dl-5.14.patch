@@ -29,17 +29,18 @@ index f6935787e7e8..15f9aec26938 100644
  	u64				sum_exec_runtime;
  	u64				vruntime;
 diff --git a/init/Kconfig b/init/Kconfig
-index 55f9f7738ebb..684b54175b56 100644
+index 55f9f7738ebb..0646b73952f7 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
-@@ -105,6 +105,14 @@ config THREAD_INFO_IN_TASK
+@@ -105,6 +105,15 @@ config THREAD_INFO_IN_TASK
  	  One subtle change that will be needed is to use try_get_task_stack()
  	  and put_task_stack() in save_thread_stack_tsk() and get_wchan().
  
 +config BS_SCHED
 +	bool "Baby Scheduler"
-+	depends on HZ_PERIODIC && !NO_HZ && !SCHED_AUTOGROUP && !CGROUP_SCHED && !UCLAMP_TASK && !SCHED_CORE
 +	default y
++	select TICK_CPU_ACCOUNTING
++	select PREEMPT
 +	help
 +	  This is a Deadline version of Baby Scheduler.
 +
@@ -47,6 +48,93 @@ index 55f9f7738ebb..684b54175b56 100644
  menu "General setup"
  
  config BROKEN
+@@ -789,6 +798,7 @@ menu "Scheduler features"
+ config UCLAMP_TASK
+ 	bool "Enable utilization clamping for RT/FAIR tasks"
+ 	depends on CPU_FREQ_GOV_SCHEDUTIL
++	depends on !BS_SCHED
+ 	help
+ 	  This feature enables the scheduler to track the clamped utilization
+ 	  of each CPU based on RUNNABLE tasks scheduled on that CPU.
+@@ -954,6 +964,7 @@ config CGROUP_WRITEBACK
+ 
+ menuconfig CGROUP_SCHED
+ 	bool "CPU controller"
++	depends on !BS_SCHED
+ 	default n
+ 	help
+ 	  This feature lets CPU scheduler recognize task groups and control CPU
+@@ -1231,6 +1242,8 @@ config CHECKPOINT_RESTORE
+ 
+ config SCHED_AUTOGROUP
+ 	bool "Automatic process group scheduling"
++	default n
++	depends on !BS_SCHED
+ 	select CGROUPS
+ 	select CGROUP_SCHED
+ 	select FAIR_GROUP_SCHED
+@@ -1420,6 +1433,7 @@ config BPF
+ menuconfig EXPERT
+ 	bool "Configure standard kernel features (expert users)"
+ 	# Unhide debug options, to make the on-by-default options visible
++	depends on !BS_SCHED
+ 	select DEBUG_KERNEL
+ 	help
+ 	  This option allows certain base kernel options and settings
+diff --git a/kernel/Kconfig.hz b/kernel/Kconfig.hz
+index 38ef6d06888e..f1efcc6ba603 100644
+--- a/kernel/Kconfig.hz
++++ b/kernel/Kconfig.hz
+@@ -5,7 +5,7 @@
+ 
+ choice
+ 	prompt "Timer frequency"
+-	default HZ_250
++	default HZ_803
+ 	help
+ 	 Allows the configuration of the timer frequency. It is customary
+ 	 to have the timer interrupt run at 1000 Hz but 100 Hz may be more
+@@ -40,6 +40,11 @@ choice
+ 	 on SMP and NUMA systems and exactly dividing by both PAL and
+ 	 NTSC frame rates for video and multimedia work.
+ 
++	config HZ_803
++		bool "803 HZ"
++	help
++	 803 Hz is the default for Baby (dl).
++
+ 	config HZ_1000
+ 		bool "1000 HZ"
+ 	help
+@@ -53,6 +58,7 @@ config HZ
+ 	default 100 if HZ_100
+ 	default 250 if HZ_250
+ 	default 300 if HZ_300
++	default 803 if HZ_803
+ 	default 1000 if HZ_1000
+ 
+ config SCHED_HRTICK
+diff --git a/kernel/Kconfig.preempt b/kernel/Kconfig.preempt
+index 5876e30c5740..f5a195470121 100644
+--- a/kernel/Kconfig.preempt
++++ b/kernel/Kconfig.preempt
+@@ -2,7 +2,7 @@
+ 
+ choice
+ 	prompt "Preemption Model"
+-	default PREEMPT_NONE
++	default PREEMPT
+ 
+ config PREEMPT_NONE
+ 	bool "No Forced Preemption (Server)"
+@@ -103,6 +103,7 @@ config PREEMPT_DYNAMIC
+ config SCHED_CORE
+ 	bool "Core Scheduling for SMT"
+ 	depends on SCHED_SMT
++	depends on !BS_SCHED
+ 	help
+ 	  This option permits Core Scheduling, a means of coordinated task
+ 	  selection across SMT siblings. When enabled -- see
 diff --git a/kernel/sched/Makefile b/kernel/sched/Makefile
 index 978fcfca5871..464b134de739 100644
 --- a/kernel/sched/Makefile
@@ -62,10 +150,10 @@ index 978fcfca5871..464b134de739 100644
  obj-$(CONFIG_SMP) += cpupri.o cpudeadline.o topology.o stop_task.o pelt.o
 diff --git a/kernel/sched/bs.c b/kernel/sched/bs.c
 new file mode 100644
-index 000000000000..520b10adc448
+index 000000000000..04675d6a5d3d
 --- /dev/null
 +++ b/kernel/sched/bs.c
-@@ -0,0 +1,908 @@
+@@ -0,0 +1,910 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Baby Scheduler (BS) Class (SCHED_NORMAL/SCHED_BATCH)
@@ -106,8 +194,6 @@ index 000000000000..520b10adc448
 +
 +	if (PRIO_TO_NICE(p->prio) == 0)
 +		return deadline;
-+
-+	BUG_ON(PRIO_TO_NICE(p->prio) + 20 < 0);
 +
 +	prio_diff = prio_factor[PRIO_TO_NICE(p->prio) + 20];
 +
@@ -489,6 +575,9 @@ index 000000000000..520b10adc448
 +	list_move(&p->se.group_node, &rq->cfs_tasks);
 +#endif
 +
++	if (hrtick_enabled_fair(rq))
++		hrtick_start_fair(rq, p);
++
 +	return p;
 +
 +idle:
@@ -707,7 +796,7 @@ index 000000000000..520b10adc448
 +	return 1;
 +}
 +
-+static void pull_from(struct rq *this_rq,
++static void pull_from(struct rq *dist_rq,
 +		      struct rq *src_rq,
 +		      struct rq_flags *src_rf,
 +		      struct task_struct *p)
@@ -716,49 +805,50 @@ index 000000000000..520b10adc448
 +
 +	// detach task
 +	deactivate_task(src_rq, p, DEQUEUE_NOCLOCK);
-+	set_task_cpu(p, cpu_of(this_rq));
++	set_task_cpu(p, cpu_of(dist_rq));
 +
 +	// unlock src rq
 +	rq_unlock(src_rq, src_rf);
 +
-+	// lock this rq
-+	rq_lock(this_rq, &rf);
-+	update_rq_clock(this_rq);
++	// lock dist rq
++	rq_lock(dist_rq, &rf);
++	update_rq_clock(dist_rq);
 +
-+	activate_task(this_rq, p, ENQUEUE_NOCLOCK);
-+	check_preempt_curr(this_rq, p, 0);
++	activate_task(dist_rq, p, ENQUEUE_NOCLOCK);
++	check_preempt_curr(dist_rq, p, 0);
 +
-+	// unlock this rq
-+	rq_unlock(this_rq, &rf);
++	// unlock dist rq
++	rq_unlock(dist_rq, &rf);
 +
 +	local_irq_restore(src_rf->flags);
 +}
 +
-+static int move_task(struct rq *this_rq, struct rq *src_rq,
++static int move_task(struct rq *dist_rq, struct rq *src_rq,
 +			struct rq_flags *src_rf)
 +{
 +	struct cfs_rq *src_cfs_rq = &src_rq->cfs;
 +	struct task_struct *p;
 +	struct bs_node *bsn = src_cfs_rq->head;
-+	int moved = 0;
 +
 +	while (bsn) {
 +		p = task_of(se_of(bsn));
-+		if (can_migrate_task(p, cpu_of(this_rq), src_rq)) {
-+			pull_from(this_rq, src_rq, src_rf, p);
-+			moved = 1;
-+			break;
++		if (can_migrate_task(p, cpu_of(dist_rq), src_rq)) {
++			pull_from(dist_rq, src_rq, src_rf, p);
++			return 1;
 +		}
 +
 +		bsn = bsn->next;
 +	}
 +
-+	if (!moved) {
-+		rq_unlock(src_rq, src_rf);
-+		local_irq_restore(src_rf->flags);
-+	}
++	/*
++	 * Here we know we have not migrated any task,
++	 * thus, we need to unlock and return 0
++	 * Note: the pull_from does the unlocking for us.
++	 */
++	rq_unlock(src_rq, src_rf);
++	local_irq_restore(src_rf->flags);
 +
-+	return moved;
++	return 0;
 +}
 +
 +static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
@@ -3136,3 +3226,53 @@ index d53d19770866..9ac800e858fc 100644
  
  #ifdef	CONFIG_SCHED_DEBUG
  	unsigned int		nr_spread_over;
+diff --git a/kernel/time/Kconfig b/kernel/time/Kconfig
+index 04bfd62f5e5c..fac3f528b432 100644
+--- a/kernel/time/Kconfig
++++ b/kernel/time/Kconfig
+@@ -88,7 +88,7 @@ config NO_HZ_COMMON
+ 
+ choice
+ 	prompt "Timer tick handling"
+-	default NO_HZ_IDLE if NO_HZ
++	default HZ_PERIODIC if BS_SCHED
+ 
+ config HZ_PERIODIC
+ 	bool "Periodic timer ticks (constant rate, no dynticks)"
+@@ -98,6 +98,7 @@ config HZ_PERIODIC
+ 
+ config NO_HZ_IDLE
+ 	bool "Idle dynticks system (tickless idle)"
++	depends on !BS_SCHED
+ 	select NO_HZ_COMMON
+ 	help
+ 	  This option enables a tickless idle system: timer interrupts
+@@ -112,6 +113,7 @@ config NO_HZ_FULL
+ 	# We need at least one periodic CPU for timekeeping
+ 	depends on SMP
+ 	depends on HAVE_CONTEXT_TRACKING
++	depends on !BS_SCHED
+ 	# VIRT_CPU_ACCOUNTING_GEN dependency
+ 	depends on HAVE_VIRT_CPU_ACCOUNTING_GEN
+ 	select NO_HZ_COMMON
+@@ -168,6 +170,8 @@ config CONTEXT_TRACKING_FORCE
+ 
+ config NO_HZ
+ 	bool "Old Idle dynticks config"
++	default n
++	depends on !BS_SCHED
+ 	help
+ 	  This is the old config entry that enables dynticks idle.
+ 	  We keep it around for a little while to enforce backward
+diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
+index ffd22e499997..c10894554e7b 100644
+--- a/lib/Kconfig.debug
++++ b/lib/Kconfig.debug
+@@ -583,6 +583,7 @@ endmenu
+ 
+ config DEBUG_KERNEL
+ 	bool "Kernel debugging"
++	depends on !BS_SCHED
+ 	help
+ 	  Say Y here if you are developing drivers or trying to debug and
+ 	  identify kernel problems.
