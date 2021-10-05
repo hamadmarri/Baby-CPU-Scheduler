@@ -25,6 +25,13 @@ See the equation in kernel/sched/bs.c:convert_to_vruntime.
 ### Patch
 First, you need to patch the kernel source with one of the flavors of baby scheduler. See an example of patching linux kernel [here](https://github.com/hamadmarri/cacule-cpu-scheduler#how-to-apply-the-patch). You can use the same method to patch with baby instead of cacule.
 
+1. Download the linux kernel (https://www.kernel.org/) that is same version as the patch (i.e if patch file name is baby-5.14.patch, then download https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.14.9.tar.xz)
+2. Unzip linux kernel
+3. Download baby patch file and place it inside the just unzipped linux kernel folder
+4. cd linux-(version)
+5. patch -p1 < baby-5.14.patch
+
+
 ### Configure
 Baby uses periodic HZ only, and you need to disable other scheduler features such as `CGROUP_SCHED` and stat/debuging features.
 
