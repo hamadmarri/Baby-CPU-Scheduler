@@ -3,23 +3,52 @@
 This is a very basic and lightweight yet very performant CPU scheduler.
 You can use it for learning purposes as a base ground CPU scheduler on
 Linux. Notice that many features are disabled to make this scheduler as
-simple as possible. Baby Scheduler is very lightweight and powerful for
-normal usage. I am using it as my main scheduler and sometimes I
+simple as possible.
+
+Baby Scheduler is very lightweight and powerful for
+normal usage. I am using (`baby-dl`) as my main scheduler and sometimes I
 switch back to CacULE for testing. The throughput in Baby Scheduler is
 higher due to the task loadbalancer that I made for Baby Scheduler. The
 loadbalancing is done via only one CPU which is CPU0 in which CPU0 scan
 all other CPUs and move one task in every tick. The balancing is only
 depending on the number of tasks (i.e. no load, weight or other factors).
+
+
 Baby scheduler is only 1036 LOC where 254 LOC of it are just dependent
 functions that are copied from CFS without any changes to let the
-scheduler compile and run. You can find all Baby code is reduced in
-bs.c, bs.h, and numa_fair.h. Baby scheduler picks next task that has
+scheduler compile and run. You can find all Baby code in
+`bs.c`, `bs.h`, and `numa_fair.h`.
+
+## Flavors
+Currently there are three flavors of Baby Scheduler
+* Deadline Scheduling (dl) - main
+* Virtual Run Time Scheduling (vrt)
+* Round Robin Scheduling (rr)
+
+All the three flavors have the same tasks load balancing method.
+They only differ in the strategy of picking the next task to run, and other minor differences.
+
+### Deadline Scheduling
+Baby's main scheduling is the deadline flavor. The scheduler picks the task with the earliest deadline.
+A new task gets a `deadline = now() + 1.180ms`. The task with earliest deadline will be picked and run
+on the CPU until it gets to sleep or another task had earlier deadline. While the task is running, its
+deadline gets updated only when its deadline is past - compared with the current time (now). So, basically
+we don't want to update its deadline with `now() + 1.180ms` on every tick, otherwise, I call this situation
+by horse and carrot. I am using the deadline as a slice too, we don't want to keep preempting tasks in
+which their deadlines are very close to each other. The best solution is to give a minimum/maximum slice to
+the running task to at least gets its next updated deadline to be not very close to the competing task. This
+can save some context switching. Anyway, our deadline/slice is not too hight, it is only a 1.180ms. 
+
+### Virtual Run Time Scheduling
+The scheduler picks next task that has
 least vruntime, however, all CFS load/weight for task priority are
 replaced with a simpler mechanism. Tasks priorities are injected in
 vruntime where NICE0 priority task has a vruntime = real_exec_time,
 but NICE-20 task has a vruntime < real_exec_time in which NICE-20 task
 will run 20 more milliseconds than NICE0 one in a race time of 40ms.
 See the equation in kernel/sched/bs.c:convert_to_vruntime.
+
+### Round Robin Scheduling
 
 ## Patch and Compile
 ### Patch
