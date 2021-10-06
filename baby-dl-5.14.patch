@@ -150,10 +150,10 @@ index 978fcfca5871..464b134de739 100644
  obj-$(CONFIG_SMP) += cpupri.o cpudeadline.o topology.o stop_task.o pelt.o
 diff --git a/kernel/sched/bs.c b/kernel/sched/bs.c
 new file mode 100644
-index 000000000000..81077701ae9d
+index 000000000000..fee2f2da92b7
 --- /dev/null
 +++ b/kernel/sched/bs.c
-@@ -0,0 +1,914 @@
+@@ -0,0 +1,907 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Baby Scheduler (BS) Class (SCHED_NORMAL/SCHED_BATCH)
@@ -395,17 +395,10 @@ index 000000000000..81077701ae9d
 +	bool curr = cfs_rq->curr == se;
 +	bool renorm = !(flags & ENQUEUE_WAKEUP) || (flags & ENQUEUE_MIGRATED);
 +
-+	/*
-+	 * If we're the current task, we must renormalise before calling
-+	 * update_curr().
-+	 */
-+	if (renorm && curr)
-+		se->bs_node.deadline = calc_deadline(cfs_rq, se);
-+
 +	update_curr(cfs_rq);
 +
 +	/*
-+	 * Otherwise, renormalise after, such that we're placed at the current
++	 * Renormalise, such that we're placed at the current
 +	 * moment in time, instead of some random moment in the past. Being
 +	 * placed in the past could significantly boost this task to the
 +	 * fairness detriment of existing tasks.
@@ -431,8 +424,8 @@ index 000000000000..81077701ae9d
 +	 * Check if didn't reach its deadline, then
 +	 * rise its priority
 +	 */
-+	if (task_sleep && !reached_deadline(cfs_rq, se)
-+	    && PRIO_TO_NICE(p->prio) > -20)
++	if (task_sleep && !reached_deadline(cfs_rq, se) &&
++	    PRIO_TO_NICE(p->prio) > -20)
 +	{
 +		p->prio--;
 +	}
