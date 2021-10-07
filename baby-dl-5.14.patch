@@ -150,10 +150,10 @@ index 978fcfca5871..464b134de739 100644
  obj-$(CONFIG_SMP) += cpupri.o cpudeadline.o topology.o stop_task.o pelt.o
 diff --git a/kernel/sched/bs.c b/kernel/sched/bs.c
 new file mode 100644
-index 000000000000..fee2f2da92b7
+index 000000000000..7520ecc0d03d
 --- /dev/null
 +++ b/kernel/sched/bs.c
-@@ -0,0 +1,907 @@
+@@ -0,0 +1,908 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Baby Scheduler (BS) Class (SCHED_NORMAL/SCHED_BATCH)
@@ -278,7 +278,7 @@ index 000000000000..fee2f2da92b7
 +	struct bs_node *c_bsn = &curr->bs_node;
 +	struct sched_entity *next;
 +	u64 now = rq_clock(rq);
-+	s64 cm, cd;
++	s64 cm, cd, c_ran;
 +
 +	if (rq->cfs.h_nr_running < 2)
 +		return;
@@ -288,11 +288,12 @@ index 000000000000..fee2f2da92b7
 +	if (!next)
 +		return;
 +
-+	cd = c_bsn->deadline - now;
-+	cm = cd - MIN_DEADLINE_NS;
++	c_ran	= curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
++	cm	= MIN_DEADLINE_NS - c_ran;
++	cd	= c_bsn->deadline - now;
 +
-+	// if c1
-+	if (cm > 0) {
++	// if c1 (if 590us >= current ran)
++	if (cm >= 0) {
 +		if (entity_before(&next->bs_node, c_bsn)) {
 +			// if n1
 +			if (diff_dl(curr, next) - MIN_DEADLINE_NS > 0)
