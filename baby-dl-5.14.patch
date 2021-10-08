@@ -150,10 +150,10 @@ index 978fcfca5871..464b134de739 100644
  obj-$(CONFIG_SMP) += cpupri.o cpudeadline.o topology.o stop_task.o pelt.o
 diff --git a/kernel/sched/bs.c b/kernel/sched/bs.c
 new file mode 100644
-index 000000000000..7520ecc0d03d
+index 000000000000..754038b35f38
 --- /dev/null
 +++ b/kernel/sched/bs.c
-@@ -0,0 +1,908 @@
+@@ -0,0 +1,909 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Baby Scheduler (BS) Class (SCHED_NORMAL/SCHED_BATCH)
@@ -243,13 +243,11 @@ index 000000000000..7520ecc0d03d
 +	return (s64)(a->deadline - b->deadline) < 0;
 +}
 +
-+static inline s64
-+diff_dl(struct sched_entity *a, struct sched_entity *b)
-+{
-+	return (s64)(a->bs_node.deadline - b->bs_node.deadline);
-+}
-+
 +#ifdef CONFIG_SCHED_HRTICK
++
++#define DIFF_DL(a, b) ( (s64)((a)->bs_node.deadline - (b)->bs_node.deadline) )
++#define DIFF_DL_NOW(a, now) ( (s64)((a)->bs_node.deadline - (now)) )
++
 +static struct sched_entity *
 +pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr);
 +
@@ -290,13 +288,13 @@ index 000000000000..7520ecc0d03d
 +
 +	c_ran	= curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
 +	cm	= MIN_DEADLINE_NS - c_ran;
-+	cd	= c_bsn->deadline - now;
++	cd	= DIFF_DL_NOW(curr, now);
 +
 +	// if c1 (if 590us >= current ran)
 +	if (cm >= 0) {
 +		if (entity_before(&next->bs_node, c_bsn)) {
 +			// if n1
-+			if (diff_dl(curr, next) - MIN_DEADLINE_NS > 0)
++			if (DIFF_DL(curr, next) - MIN_DEADLINE_NS > 0)
 +				hrtick_start(rq, cm);
 +			// if n2
 +			else
@@ -304,14 +302,14 @@ index 000000000000..7520ecc0d03d
 +		}
 +		// if n3
 +		else {
-+			hrtick_start(rq, diff_dl(next, curr));
++			hrtick_start(rq, DIFF_DL_NOW(next, now));
 +		}
 +	}
 +	// if c2
 +	else {
 +		if (entity_before(&next->bs_node, c_bsn)) {
 +			// if n1
-+			if (diff_dl(curr, next) - MIN_DEADLINE_NS > 0)
++			if (DIFF_DL(curr, next) - MIN_DEADLINE_NS > 0)
 +				resched_curr(rq);
 +			// if n2
 +			else
@@ -319,7 +317,7 @@ index 000000000000..7520ecc0d03d
 +		}
 +		// if n3
 +		else {
-+			hrtick_start(rq, diff_dl(next, curr));
++			hrtick_start(rq, DIFF_DL_NOW(next, now));
 +		}
 +	}
 +}
@@ -515,6 +513,9 @@ index 000000000000..7520ecc0d03d
 +	se->exec_start = rq_clock_task(rq_of(cfs_rq));
 +	cfs_rq->curr = se;
 +	se->prev_sum_exec_runtime = se->sum_exec_runtime;
++
++	if (reached_deadline(cfs_rq, se))
++		se->bs_node.deadline = calc_deadline(cfs_rq, se);
 +}
 +
 +static struct sched_entity *
